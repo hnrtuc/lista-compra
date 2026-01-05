@@ -1,73 +1,112 @@
-import React, { useState, useEffect } from 'react';
-import { ShoppingCart, Plus, Trash2, Check, X, Sparkles, Calendar, DollarSign, Edit2, Save, Zap, History, TrendingUp, ChevronDown, ChevronUp } from 'lucide-react';
-
-export default function SmartShoppingList() {
-  const [input, setInput] = useState('');
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [editText, setEditText] = useState('');
-  const [aiStatus, setAiStatus] = useState('ready');
-  const [purchaseHistory, setPurchaseHistory] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    try {
-      const result = await window.storage.get('shopping-items');
-      if (result) {
-        setItems(JSON.parse(result.value));
-      }
-      
-      const historyResult = await window.storage.get('purchase-history');
-      if (historyResult) {
-        setPurchaseHistory(JSON.parse(historyResult.value));
-      }
-    } catch (error) {
-      console.log('No hay datos guardados aún');
-    }
-  };
-
-  const saveData = async (newItems) => {
-    try {
-      await window.storage.set('shopping-items', JSON.stringify(newItems));
-    } catch (error) {
-      console.error('Error al guardar:', error);
-    }
-  };
-
-  const saveHistory = async (newHistory) => {
-    try {
-      await window.storage.set('purchase-history', JSON.stringify(newHistory));
-    } catch (error) {
-      console.error('Error al guardar historial:', error);
-    }
-  };
-
-  const addItemsWithAI = async () => {
-    if (!input.trim()) return;
-
-    setLoading(true);
-    setAiStatus('processing');
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#3B82F6">
+    <title>Lista de Compras Inteligente - Con IA y Voz</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="m-0 p-0">
+    <div id="root"></div>
     
-    try {
-      console.log('Enviando solicitud a Claude API...');
-      
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [
-            { 
-              role: "user", 
-              content: `Analiza esta lista de compras y separa CADA producto en un item individual.
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function App() {
+            const [input, setInput] = useState('');
+            const [items, setItems] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [editingId, setEditingId] = useState(null);
+            const [editText, setEditText] = useState('');
+            const [aiStatus, setAiStatus] = useState('ready');
+            const [purchaseHistory, setPurchaseHistory] = useState([]);
+            const [showHistory, setShowHistory] = useState(false);
+            const [isListening, setIsListening] = useState(false);
+            const [voiceSupported, setVoiceSupported] = useState(false);
+            const recognitionRef = useRef(null);
+
+            useEffect(() => {
+                const saved = localStorage.getItem('shopping-items');
+                if (saved) setItems(JSON.parse(saved));
+                
+                const savedHistory = localStorage.getItem('purchase-history');
+                if (savedHistory) setPurchaseHistory(JSON.parse(savedHistory));
+
+                // Verificar soporte de reconocimiento de voz
+                if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                    setVoiceSupported(true);
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    recognitionRef.current = new SpeechRecognition();
+                    recognitionRef.current.lang = 'es-AR';
+                    recognitionRef.current.continuous = false;
+                    recognitionRef.current.interimResults = false;
+
+                    recognitionRef.current.onresult = (event) => {
+                        const transcript = event.results[0][0].transcript;
+                        setInput(transcript);
+                        setIsListening(false);
+                    };
+
+                    recognitionRef.current.onerror = (event) => {
+                        console.error('Error de reconocimiento:', event.error);
+                        setIsListening(false);
+                        if (event.error === 'no-speech') {
+                            alert('No se detectó ningún audio. Intenta de nuevo.');
+                        }
+                    };
+
+                    recognitionRef.current.onend = () => {
+                        setIsListening(false);
+                    };
+                }
+            }, []);
+
+            const startVoiceRecognition = () => {
+                if (recognitionRef.current && !isListening) {
+                    setIsListening(true);
+                    recognitionRef.current.start();
+                }
+            };
+
+            const stopVoiceRecognition = () => {
+                if (recognitionRef.current && isListening) {
+                    recognitionRef.current.stop();
+                    setIsListening(false);
+                }
+            };
+
+            const saveItems = (newItems) => {
+                localStorage.setItem('shopping-items', JSON.stringify(newItems));
+                setItems(newItems);
+            };
+
+            const saveHistory = (newHistory) => {
+                localStorage.setItem('purchase-history', JSON.stringify(newHistory));
+                setPurchaseHistory(newHistory);
+            };
+
+            const addItemsWithAI = async () => {
+                if (!input.trim()) return;
+
+                setLoading(true);
+                setAiStatus('processing');
+                
+                try {
+                    const response = await fetch("https://api.anthropic.com/v1/messages", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                            model: "claude-sonnet-4-20250514",
+                            max_tokens: 1000,
+                            messages: [{
+                                role: "user",
+                                content: `Analiza esta lista de compras y separa CADA producto en un item individual.
 
 Devuélveme ÚNICAMENTE un JSON válido (sin markdown, sin explicaciones) con este formato exacto:
 
@@ -86,485 +125,411 @@ Reglas importantes:
 Lista a procesar: "${input}"
 
 Responde SOLO con el array JSON, nada más.`
-            }
-          ],
-        })
-      });
+                            }],
+                        })
+                    });
 
-      if (!response.ok) {
-        throw new Error(`Error HTTP: ${response.status}`);
-      }
+                    if (!response.ok) throw new Error(`Error: ${response.status}`);
 
-      const data = await response.json();
-      console.log('Respuesta de Claude:', data);
-      
-      if (data.content && data.content[0]?.text) {
-        let text = data.content[0].text.trim();
-        
-        // Limpiar markdown si existe
-        text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        
-        console.log('Texto a parsear:', text);
-        
-        const parsedItems = JSON.parse(text);
-        
-        if (!Array.isArray(parsedItems)) {
-          throw new Error('La respuesta no es un array válido');
-        }
-        
-        const newItems = parsedItems.map((item, index) => ({
-          id: Date.now() + index,
-          name: item.name || item.producto || 'Sin nombre',
-          quantity: item.quantity || item.cantidad || '1 unidad',
-          category: item.category || item.categoria || 'Otros',
-          estimatedPrice: parseFloat(item.estimatedPrice || item.precio || 0),
-          purchased: false,
-          addedAt: new Date().toISOString()
-        }));
-
-        console.log('Items procesados:', newItems);
-
-        const updatedItems = [...items, ...newItems];
-        setItems(updatedItems);
-        saveData(updatedItems);
-        setInput('');
-        setAiStatus('success');
-        
-        setTimeout(() => setAiStatus('ready'), 2000);
-      } else {
-        throw new Error('No se recibió respuesta válida de Claude');
-      }
-    } catch (error) {
-      console.error('Error con Claude AI:', error);
-      setAiStatus('error');
-      alert('Error al procesar con IA: ' + error.message + '\n\nIntenta agregar los productos manualmente o reformula tu lista.');
-      setTimeout(() => setAiStatus('ready'), 3000);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const addItemManually = () => {
-    if (!input.trim()) return;
-    
-    const newItem = {
-      id: Date.now(),
-      name: input,
-      quantity: '1 unidad',
-      category: 'Otros',
-      estimatedPrice: 0,
-      purchased: false,
-      addedAt: new Date().toISOString()
-    };
-    
-    const updatedItems = [...items, newItem];
-    setItems(updatedItems);
-    saveData(updatedItems);
-    setInput('');
-  };
-
-  const togglePurchased = (id) => {
-    const updatedItems = items.map(item =>
-      item.id === id ? { ...item, purchased: !item.purchased } : item
-    );
-    setItems(updatedItems);
-    saveData(updatedItems);
-  };
-
-  const deleteItem = (id) => {
-    const updatedItems = items.filter(item => item.id !== id);
-    setItems(updatedItems);
-    saveData(updatedItems);
-  };
-
-  const startEdit = (item) => {
-    setEditingId(item.id);
-    setEditText(item.name);
-  };
-
-  const saveEdit = (id) => {
-    const updatedItems = items.map(item =>
-      item.id === id ? { ...item, name: editText } : item
-    );
-    setItems(updatedItems);
-    saveData(updatedItems);
-    setEditingId(null);
-    setEditText('');
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditText('');
-  };
-
-  const clearCompleted = () => {
-    const completedItems = items.filter(item => item.purchased);
-    
-    if (completedItems.length > 0) {
-      // Crear registro de compra para el historial
-      const purchaseRecord = {
-        id: Date.now(),
-        date: new Date().toISOString(),
-        items: completedItems,
-        total: completedItems.reduce((sum, item) => sum + (item.estimatedPrice || 0), 0),
-        itemCount: completedItems.length
-      };
-      
-      const newHistory = [purchaseRecord, ...purchaseHistory].slice(0, 50); // Mantener solo las últimas 50 compras
-      setPurchaseHistory(newHistory);
-      saveHistory(newHistory);
-    }
-    
-    const updatedItems = items.filter(item => !item.purchased);
-    setItems(updatedItems);
-    saveData(updatedItems);
-  };
-
-  const deleteHistory = async (id) => {
-    const newHistory = purchaseHistory.filter(record => record.id !== id);
-    setPurchaseHistory(newHistory);
-    saveHistory(newHistory);
-  };
-
-  const clearAllHistory = async () => {
-    if (confirm('¿Estás seguro de que quieres borrar todo el historial?')) {
-      setPurchaseHistory([]);
-      saveHistory([]);
-    }
-  };
-
-  const pendingItems = items.filter(item => !item.purchased);
-  const completedItems = items.filter(item => item.purchased);
-  const totalEstimated = items.reduce((sum, item) => sum + (item.estimatedPrice || 0), 0);
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-2 sm:p-4">
-      <div className="max-w-2xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4 sm:mb-6">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <div className="bg-blue-500 p-2 sm:p-3 rounded-xl">
-                <ShoppingCart className="text-white" size={24} />
-              </div>
-              <div>
-                <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Mi Lista de Compras</h1>
-                <p className="text-xs sm:text-sm text-gray-500 flex items-center gap-2 mt-1">
-                  <Zap size={12} className="text-yellow-500" />
-                  Potenciado por Claude AI
-                </p>
-              </div>
-            </div>
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-full text-xs sm:text-sm font-medium transition-all ${
-              aiStatus === 'ready' ? 'bg-green-100 text-green-700' :
-              aiStatus === 'processing' ? 'bg-blue-100 text-blue-700 animate-pulse' :
-              aiStatus === 'success' ? 'bg-emerald-100 text-emerald-700' :
-              'bg-red-100 text-red-700'
-            }`}>
-              <div className={`w-2 h-2 rounded-full ${
-                aiStatus === 'ready' ? 'bg-green-500' :
-                aiStatus === 'processing' ? 'bg-blue-500' :
-                aiStatus === 'success' ? 'bg-emerald-500' :
-                'bg-red-500'
-              }`}></div>
-              {aiStatus === 'ready' && '✓ IA Lista'}
-              {aiStatus === 'processing' && '⚡ Procesando...'}
-              {aiStatus === 'success' && '✓ ¡Listo!'}
-              {aiStatus === 'error' && '✗ Error'}
-            </div>
-          </div>
-
-          {/* Info Banner */}
-          <div className="mb-4 p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
-            <p className="text-xs sm:text-sm text-gray-700">
-              <strong className="text-purple-700">💡 Tip:</strong> Escribe varios productos juntos
-            </p>
-          </div>
-
-          {/* Input Area */}
-          <div className="space-y-3">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ej: 2 kilos papa, 3 panes, leche..."
-              className="w-full px-3 sm:px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none transition-all"
-              rows={3}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && e.ctrlKey) {
-                  addItemsWithAI();
-                }
-              }}
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={addItemsWithAI}
-                disabled={loading || !input.trim()}
-                className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 sm:px-6 py-4 rounded-lg hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 font-medium shadow-md hover:shadow-lg text-sm sm:text-base touch-manipulation"
-              >
-                {loading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    <span className="hidden sm:inline">Analizando...</span>
-                    <span className="sm:hidden">...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={20} />
-                    <span>Añadir con IA</span>
-                  </>
-                )}
-              </button>
-              <button
-                onClick={addItemManually}
-                disabled={!input.trim()}
-                className="bg-gray-500 text-white px-4 sm:px-6 py-4 rounded-lg hover:bg-gray-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-md hover:shadow-lg touch-manipulation"
-                title="Agregar manualmente"
-              >
-                <Plus size={20} />
-                <span className="hidden sm:inline">Manual</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-4">
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-2 sm:p-3 rounded-lg text-center border border-blue-200">
-              <div className="text-xl sm:text-2xl font-bold text-blue-600">{pendingItems.length}</div>
-              <div className="text-xs text-gray-600 font-medium">Pendientes</div>
-            </div>
-            <div className="bg-gradient-to-br from-green-50 to-green-100 p-2 sm:p-3 rounded-lg text-center border border-green-200">
-              <div className="text-xl sm:text-2xl font-bold text-green-600">{completedItems.length}</div>
-              <div className="text-xs text-gray-600 font-medium">Comprados</div>
-            </div>
-            <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-2 sm:p-3 rounded-lg text-center border border-purple-200">
-              <div className="text-xl sm:text-2xl font-bold text-purple-600">${totalEstimated.toFixed(0)}</div>
-              <div className="text-xs text-gray-600 font-medium">Estimado</div>
-            </div>
-          </div>
-
-          {/* History Button */}
-          {purchaseHistory.length > 0 && (
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="w-full mt-4 flex items-center justify-between p-4 bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-lg hover:from-orange-100 hover:to-amber-100 transition-all touch-manipulation"
-            >
-              <div className="flex items-center gap-2">
-                <History className="text-orange-600" size={20} />
-                <span className="font-semibold text-gray-700 text-sm sm:text-base">Historial de Compras</span>
-                <span className="bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full text-xs font-bold">
-                  {purchaseHistory.length}
-                </span>
-              </div>
-              {showHistory ? <ChevronUp className="text-gray-600" size={20} /> : <ChevronDown className="text-gray-600" size={20} />}
-            </button>
-          )}
-        </div>
-
-        {/* Purchase History */}
-        {showHistory && purchaseHistory.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4 sm:mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg sm:text-xl font-bold text-gray-800 flex items-center gap-2">
-                <TrendingUp className="text-orange-500" size={20} />
-                Compras Anteriores
-              </h2>
-              <button
-                onClick={clearAllHistory}
-                className="text-xs sm:text-sm text-red-600 hover:text-red-700 font-medium hover:underline transition-all touch-manipulation px-2 py-1"
-              >
-                Borrar todo
-              </button>
-            </div>
-            
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {purchaseHistory.map(record => {
-                const date = new Date(record.date);
-                const formattedDate = date.toLocaleDateString('es-AR', { 
-                  day: '2-digit', 
-                  month: 'short', 
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                });
-                
-                return (
-                  <div key={record.id} className="border border-gray-200 rounded-lg p-3 sm:p-4 hover:border-orange-300 transition-all bg-gradient-to-r from-white to-orange-50">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <Calendar className="text-orange-500" size={14} />
-                          <span className="text-xs sm:text-sm font-semibold text-gray-700">{formattedDate}</span>
-                        </div>
-                        <div className="flex items-center gap-3 mt-1">
-                          <span className="text-xs text-gray-500">{record.itemCount} productos</span>
-                          <span className="text-base sm:text-lg font-bold text-green-600">${record.total.toFixed(0)}</span>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => deleteHistory(record.id)}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors touch-manipulation"
-                        title="Eliminar registro"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
+                    const data = await response.json();
                     
-                    <div className="space-y-1">
-                      {record.items.slice(0, 3).map(item => (
-                        <div key={item.id} className="flex items-center justify-between text-xs sm:text-sm bg-white rounded px-2 py-1">
-                          <span className="text-gray-700">{item.name}</span>
-                          <span className="text-gray-500 text-xs">{item.quantity}</span>
+                    if (data.content && data.content[0]?.text) {
+                        let text = data.content[0].text.trim();
+                        text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+                        
+                        const parsedItems = JSON.parse(text);
+                        
+                        const newItems = parsedItems.map((item, index) => ({
+                            id: Date.now() + index,
+                            name: item.name || 'Sin nombre',
+                            quantity: item.quantity || '1 unidad',
+                            category: item.category || 'Otros',
+                            estimatedPrice: parseFloat(item.estimatedPrice || 0),
+                            purchased: false,
+                            addedAt: new Date().toISOString()
+                        }));
+
+                        saveItems([...items, ...newItems]);
+                        setInput('');
+                        setAiStatus('success');
+                        setTimeout(() => setAiStatus('ready'), 2000);
+                    }
+                } catch (error) {
+                    setAiStatus('error');
+                    alert('Error con IA: ' + error.message);
+                    setTimeout(() => setAiStatus('ready'), 3000);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const addItemManually = () => {
+                if (!input.trim()) return;
+                const newItem = {
+                    id: Date.now(),
+                    name: input,
+                    quantity: '1 unidad',
+                    category: 'Otros',
+                    estimatedPrice: 0,
+                    purchased: false
+                };
+                saveItems([...items, newItem]);
+                setInput('');
+            };
+
+            const togglePurchased = (id) => {
+                saveItems(items.map(item =>
+                    item.id === id ? { ...item, purchased: !item.purchased } : item
+                ));
+            };
+
+            const deleteItem = (id) => {
+                saveItems(items.filter(item => item.id !== id));
+            };
+
+            const startEdit = (item) => {
+                setEditingId(item.id);
+                setEditText(item.name);
+            };
+
+            const saveEdit = (id) => {
+                saveItems(items.map(item =>
+                    item.id === id ? { ...item, name: editText } : item
+                ));
+                setEditingId(null);
+                setEditText('');
+            };
+
+            const clearCompleted = () => {
+                const completed = items.filter(item => item.purchased);
+                
+                if (completed.length > 0) {
+                    const record = {
+                        id: Date.now(),
+                        date: new Date().toISOString(),
+                        items: completed,
+                        total: completed.reduce((sum, item) => sum + (item.estimatedPrice || 0), 0),
+                        itemCount: completed.length
+                    };
+                    saveHistory([record, ...purchaseHistory].slice(0, 50));
+                }
+                
+                saveItems(items.filter(item => !item.purchased));
+            };
+
+            const deleteHistory = (id) => {
+                saveHistory(purchaseHistory.filter(r => r.id !== id));
+            };
+
+            const pending = items.filter(i => !i.purchased);
+            const completed = items.filter(i => i.purchased);
+            const totalEstimated = items.reduce((sum, item) => sum + (item.estimatedPrice || 0), 0);
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-2 sm:p-4">
+                    <div className="max-w-2xl mx-auto">
+                        <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
+                            <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-blue-500 p-3 rounded-xl">
+                                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Mi Lista de Compras</h1>
+                                        <p className="text-xs sm:text-sm text-gray-500">⚡ Con IA y Reconocimiento de Voz</p>
+                                    </div>
+                                </div>
+                                <div className={`px-3 py-2 rounded-full text-sm font-medium ${
+                                    aiStatus === 'ready' ? 'bg-green-100 text-green-700' :
+                                    aiStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
+                                    aiStatus === 'success' ? 'bg-emerald-100 text-emerald-700' :
+                                    'bg-red-100 text-red-700'
+                                }`}>
+                                    {aiStatus === 'ready' && '✓ IA Lista'}
+                                    {aiStatus === 'processing' && '⚡ Procesando...'}
+                                    {aiStatus === 'success' && '✓ ¡Listo!'}
+                                    {aiStatus === 'error' && '✗ Error'}
+                                </div>
+                            </div>
+
+                            <div className="mb-4 p-3 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
+                                <p className="text-sm text-gray-700">
+                                    <strong className="text-purple-700">💡 Tip:</strong> Usa el micrófono para dictar tu lista o escribe varios productos juntos
+                                </p>
+                            </div>
+
+                            <div className="space-y-3">
+                                <textarea
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    placeholder="Ej: 2 kilos papa, 3 panes, leche..."
+                                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                                    rows={3}
+                                />
+                                
+                                {isListening && (
+                                    <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3 text-center animate-pulse">
+                                        <p className="text-red-700 font-semibold flex items-center justify-center gap-2">
+                                            <span className="inline-block w-3 h-3 bg-red-500 rounded-full animate-ping"></span>
+                                            🎤 Escuchando... Habla ahora
+                                        </p>
+                                    </div>
+                                )}
+
+                                <div className="flex gap-2">
+                                    {voiceSupported && (
+                                        <button
+                                            onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
+                                            className={`px-4 sm:px-6 py-4 rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 transition-all ${
+                                                isListening 
+                                                    ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' 
+                                                    : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white'
+                                            }`}
+                                            title={isListening ? "Detener grabación" : "Usar micrófono"}
+                                        >
+                                            {isListening ? (
+                                                <>
+                                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                                                        <rect x="6" y="4" width="8" height="12" rx="1"/>
+                                                    </svg>
+                                                    <span className="hidden sm:inline">Detener</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                                    </svg>
+                                                    <span className="hidden sm:inline">🎤 Hablar</span>
+                                                    <span className="sm:hidden">🎤</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={addItemsWithAI}
+                                        disabled={loading || !input.trim()}
+                                        className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 sm:px-6 py-4 rounded-lg hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-400 font-medium shadow-lg flex items-center justify-center gap-2"
+                                    >
+                                        {loading ? (
+                                            <>
+                                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                                <span className="hidden sm:inline">Analizando...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span>✨</span>
+                                                <span className="hidden sm:inline">Añadir con IA</span>
+                                                <span className="sm:hidden">IA</span>
+                                            </>
+                                        )}
+                                    </button>
+                                    <button
+                                        onClick={addItemManually}
+                                        disabled={!input.trim()}
+                                        className="bg-gray-500 text-white px-4 sm:px-6 py-4 rounded-lg hover:bg-gray-600 disabled:bg-gray-300 shadow-lg"
+                                    >
+                                        <span className="hidden sm:inline">+ Manual</span>
+                                        <span className="sm:hidden">+</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-3 mt-4">
+                                <div className="bg-blue-50 p-3 rounded-lg text-center border border-blue-200">
+                                    <div className="text-2xl font-bold text-blue-600">{pending.length}</div>
+                                    <div className="text-xs text-gray-600">Pendientes</div>
+                                </div>
+                                <div className="bg-green-50 p-3 rounded-lg text-center border border-green-200">
+                                    <div className="text-2xl font-bold text-green-600">{completed.length}</div>
+                                    <div className="text-xs text-gray-600">Comprados</div>
+                                </div>
+                                <div className="bg-purple-50 p-3 rounded-lg text-center border border-purple-200">
+                                    <div className="text-2xl font-bold text-purple-600">${totalEstimated.toFixed(0)}</div>
+                                    <div className="text-xs text-gray-600">Estimado</div>
+                                </div>
+                            </div>
+
+                            {purchaseHistory.length > 0 && (
+                                <button
+                                    onClick={() => setShowHistory(!showHistory)}
+                                    className="w-full mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 flex items-center justify-between"
+                                >
+                                    <span className="font-semibold text-gray-700 text-sm sm:text-base">📜 Historial ({purchaseHistory.length})</span>
+                                    <span>{showHistory ? '▲' : '▼'}</span>
+                                </button>
+                            )}
                         </div>
-                      ))}
-                      {record.items.length > 3 && (
-                        <div className="text-xs text-gray-500 italic px-2">
-                          +{record.items.length - 3} productos más...
-                        </div>
-                      )}
+
+                        {showHistory && purchaseHistory.length > 0 && (
+                            <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
+                                <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-4">📊 Compras Anteriores</h2>
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {purchaseHistory.map(record => (
+                                        <div key={record.id} className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-orange-50">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <div className="text-xs sm:text-sm font-semibold text-gray-700">
+                                                        {new Date(record.date).toLocaleDateString('es-AR', { 
+                                                            day: '2-digit', 
+                                                            month: 'short',
+                                                            hour: '2-digit',
+                                                            minute: '2-digit'
+                                                        })}
+                                                    </div>
+                                                    <div className="text-xs text-gray-500">
+                                                        {record.itemCount} productos - ${record.total.toFixed(0)}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => deleteHistory(record.id)}
+                                                    className="text-red-500 hover:text-red-700 p-2"
+                                                >
+                                                    🗑️
+                                                </button>
+                                            </div>
+                                            <div className="space-y-1">
+                                                {record.items.slice(0, 3).map(item => (
+                                                    <div key={item.id} className="text-xs sm:text-sm bg-white rounded px-2 py-1 flex justify-between">
+                                                        <span className="truncate">{item.name}</span>
+                                                        <span className="text-gray-500 text-xs ml-2">{item.quantity}</span>
+                                                    </div>
+                                                ))}
+                                                {record.items.length > 3 && (
+                                                    <div className="text-xs text-gray-500 italic px-2">
+                                                        +{record.items.length - 3} más...
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {pending.length > 0 && (
+                            <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
+                                <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-4">📋 Pendientes ({pending.length})</h2>
+                                <div className="space-y-2">
+                                    {pending.map(item => (
+                                        <div key={item.id} className="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 bg-gray-50 rounded-lg hover:bg-gray-100">
+                                            <button
+                                                onClick={() => togglePurchased(item.id)}
+                                                className="w-6 h-6 rounded-full border-2 border-gray-300 hover:border-green-500 flex items-center justify-center flex-shrink-0"
+                                            >
+                                                {item.purchased && <span className="text-green-500 text-sm">✓</span>}
+                                            </button>
+                                            
+                                            {editingId === item.id ? (
+                                                <div className="flex-1 flex items-center gap-2">
+                                                    <input
+                                                        type="text"
+                                                        value={editText}
+                                                        onChange={(e) => setEditText(e.target.value)}
+                                                        className="flex-1 px-3 py-2 text-sm sm:text-base border-2 border-blue-300 rounded-lg"
+                                                        autoFocus
+                                                    />
+                                                    <button
+                                                        onClick={() => saveEdit(item.id)}
+                                                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
+                                                    >
+                                                        💾
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setEditingId(null)}
+                                                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                                                    >
+                                                        ✖️
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="font-semibold text-gray-800 text-sm sm:text-base truncate">{item.name}</div>
+                                                        <div className="text-xs sm:text-sm text-gray-500 flex items-center gap-2 flex-wrap mt-1">
+                                                            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">{item.quantity}</span>
+                                                            <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">{item.category}</span>
+                                                            {item.estimatedPrice > 0 && (
+                                                                <span className="text-green-600 font-semibold text-xs">${item.estimatedPrice}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-1 sm:gap-2 flex-shrink-0">
+                                                        <button
+                                                            onClick={() => startEdit(item)}
+                                                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                                                        >
+                                                            ✏️
+                                                        </button>
+                                                        <button
+                                                            onClick={() => deleteItem(item.id)}
+                                                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                                                        >
+                                                            🗑️
+                                                        </button>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {completed.length > 0 && (
+                            <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
+                                <div className="flex items-center justify-between mb-4 gap-2">
+                                    <h2 className="text-lg sm:text-xl font-bold text-gray-800">✅ Comprados ({completed.length})</h2>
+                                    <button
+                                        onClick={clearCompleted}
+                                        className="px-3 sm:px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium shadow-lg text-xs sm:text-sm"
+                                    >
+                                        ✓ Finalizar
+                                    </button>
+                                </div>
+                                <div className="space-y-2">
+                                    {completed.map(item => (
+                                        <div key={item.id} className="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 bg-green-50 rounded-lg opacity-70">
+                                            <button
+                                                onClick={() => togglePurchased(item.id)}
+                                                className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0"
+                                            >
+                                                <span className="text-white text-sm">✓</span>
+                                            </button>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-semibold text-gray-800 line-through text-sm sm:text-base truncate">{item.name}</div>
+                                                <div className="text-xs sm:text-sm text-gray-500">{item.quantity} • {item.category}</div>
+                                            </div>
+                                            <button
+                                                onClick={() => deleteItem(item.id)}
+                                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg flex-shrink-0"
+                                            >
+                                                🗑️
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {items.length === 0 && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 sm:p-12 text-center">
+                                <div className="text-6xl mb-4">🛒</div>
+                                <h3 className="text-xl sm:text-2xl font-bold text-gray-700 mb-2">¡Tu lista está vacía!</h3>
+                                <p className="text-sm sm:text-base text-gray-500 mb-4">Usa el micrófono 🎤 o escribe productos</p>
+                                <div className="text-xs sm:text-sm text-gray-400 bg-gray-50 p-3 rounded-lg inline-block">
+                                    <p><strong>Ejemplo verbal:</strong> "Necesito 2 kilos de papa, 3 panes y 1 litro de leche"</p>
+                                </div>
+                            </div>
+                        )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Pending Items */}
-        {pendingItems.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4 sm:mb-6">
-            <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <Calendar className="text-blue-500" size={20} />
-              Pendientes ({pendingItems.length})
-            </h2>
-            <div className="space-y-2">
-              {pendingItems.map(item => (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-all hover:shadow-md"
-                >
-                  <button
-                    onClick={() => togglePurchased(item.id)}
-                    className="w-8 h-8 sm:w-6 sm:h-6 rounded-full border-2 border-gray-300 hover:border-green-500 flex items-center justify-center transition-all flex-shrink-0 touch-manipulation"
-                  >
-                    {item.purchased && <Check size={18} className="text-green-500" />}
-                  </button>
-                  
-                  {editingId === item.id ? (
-                    <div className="flex-1 flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        className="flex-1 px-3 py-2 text-base border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        autoFocus
-                      />
-                      <button
-                        onClick={() => saveEdit(item.id)}
-                        className="p-3 text-green-600 hover:bg-green-50 rounded-lg transition-colors touch-manipulation"
-                      >
-                        <Save size={20} />
-                      </button>
-                      <button
-                        onClick={cancelEdit}
-                        className="p-3 text-red-600 hover:bg-red-50 rounded-lg transition-colors touch-manipulation"
-                      >
-                        <X size={20} />
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-gray-800 text-sm sm:text-base truncate">{item.name}</div>
-                        <div className="text-xs sm:text-sm text-gray-500 flex items-center gap-2 mt-1 flex-wrap">
-                          <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-medium">{item.quantity}</span>
-                          <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs font-medium">{item.category}</span>
-                          {item.estimatedPrice > 0 && (
-                            <span className="text-green-600 flex items-center gap-1 font-semibold">
-                              <DollarSign size={12} />
-                              {item.estimatedPrice}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex gap-1 sm:gap-2 flex-shrink-0">
-                        <button
-                          onClick={() => startEdit(item)}
-                          className="p-2 sm:p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors touch-manipulation"
-                        >
-                          <Edit2 size={18} />
-                        </button>
-                        <button
-                          onClick={() => deleteItem(item.id)}
-                          className="p-2 sm:p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors touch-manipulation"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                    </>
-                  )}
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+            );
+        }
 
-        {/* Completed Items */}
-        {completedItems.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6">
-            <div className="flex items-center justify-between mb-4 gap-2">
-              <h2 className="text-lg sm:text-xl font-bold text-gray-800 flex items-center gap-2">
-                <Check className="text-green-500" size={20} />
-                <span className="text-sm sm:text-xl">Comprados ({completedItems.length})</span>
-              </h2>
-              <button
-                onClick={clearCompleted}
-                className="px-3 sm:px-4 py-2 sm:py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg hover:from-green-600 hover:to-emerald-700 font-medium transition-all shadow-md hover:shadow-lg text-xs sm:text-sm whitespace-nowrap touch-manipulation"
-              >
-                ✓ Finalizar
-              </button>
-            </div>
-            <div className="space-y-2">
-              {completedItems.map(item => (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 bg-green-50 rounded-lg opacity-70 hover:opacity-90 transition-all"
-                >
-                  <button
-                    onClick={() => togglePurchased(item.id)}
-                    className="w-8 h-8 sm:w-6 sm:h-6 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 hover:bg-green-600 transition-colors touch-manipulation"
-                  >
-                    <Check size={18} className="text-white" />
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-gray-800 line-through text-sm sm:text-base truncate">{item.name}</div>
-                    <div className="text-xs sm:text-sm text-gray-500">{item.quantity} • {item.category}</div>
-                  </div>
-                  <button
-                    onClick={() => deleteItem(item.id)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors touch-manipulation flex-shrink-0"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Empty State */}
-        {items.length === 0 && (
-          <div className="bg-white rounded-2xl shadow-xl p-8 sm:p-12 text-center">
-            <div className="bg-gradient-to-br from-blue-100 to-purple-100 w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center mx-auto mb-4">
-              <ShoppingCart className="text-blue-600" size={40} />
-            </div>
-            <h3 className="text-xl sm:text-2xl font-bold text-gray-700 mb-2">¡Tu lista está vacía!</h3>
-            <p className="text-sm sm:text-base text-gray-500 mb-4">Comienza añadiendo productos con la ayuda de Claude AI</p>
-            <div className="text-xs sm:text-sm text-gray-400 bg-gray-50 p-3 rounded-lg inline-block">
-              <p><strong>Ejemplo:</strong> "2 kilos de papa, 3 panes, 1 litro de leche"</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
