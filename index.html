@@ -108,43 +108,53 @@
                 this.render();
 
                 try {
-                    const response = await fetch("https://api.anthropic.com/v1/messages", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                    // Llamar a la función de Netlify en lugar de directamente a la API
+                    const response = await fetch('/.netlify/functions/claude-api', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
                         body: JSON.stringify({
-                            model: "claude-sonnet-4-20250514",
-                            max_tokens: 1000,
-                            messages: [{
-                                role: "user",
-                                content: `Analiza esta lista y separa CADA producto en un item. Devuelve SOLO un JSON array: [{"name":"producto","quantity":"2 kilos","category":"Verduras","estimatedPrice":500}]. Categorías: Frutas, Verduras, Lácteos, Carnes, Panadería, Bebidas, Limpieza, Snacks, Otros. Lista: "${this.input}"`
-                            }]
+                            input: this.input
                         })
                     });
 
-                    const data = await response.json();
-                    let text = data.content[0].text.trim().replace(/```json\n?/g, '').replace(/```\n?/g, '');
-                    const parsed = JSON.parse(text);
-                    
-                    const newItems = parsed.map((item, i) => ({
-                        id: Date.now() + i,
-                        name: item.name || 'Sin nombre',
-                        quantity: item.quantity || '1 unidad',
-                        category: item.category || 'Otros',
-                        estimatedPrice: parseFloat(item.estimatedPrice || 0),
-                        purchased: false
-                    }));
+                    if (!response.ok) {
+                        throw new Error(`Error: ${response.status}`);
+                    }
 
-                    this.items = [...this.items, ...newItems];
-                    this.saveData();
-                    this.input = '';
-                    this.aiStatus = 'success';
-                    setTimeout(() => {
-                        this.aiStatus = 'ready';
-                        this.render();
-                    }, 2000);
+                    const data = await response.json();
+                    
+                    if (data.content && data.content[0]?.text) {
+                        let text = data.content[0].text.trim();
+                        text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+                        
+                        const parsed = JSON.parse(text);
+                        
+                        const newItems = parsed.map((item, i) => ({
+                            id: Date.now() + i,
+                            name: item.name || 'Sin nombre',
+                            quantity: item.quantity || '1 unidad',
+                            category: item.category || 'Otros',
+                            estimatedPrice: parseFloat(item.estimatedPrice || 0),
+                            purchased: false
+                        }));
+
+                        this.items = [...this.items, ...newItems];
+                        this.saveData();
+                        this.input = '';
+                        this.aiStatus = 'success';
+                        setTimeout(() => {
+                            this.aiStatus = 'ready';
+                            this.render();
+                        }, 2000);
+                    } else {
+                        throw new Error('Respuesta inválida de la API');
+                    }
                 } catch (error) {
+                    console.error('Error con IA:', error);
                     this.aiStatus = 'error';
-                    alert('Error con IA: ' + error.message);
+                    alert('Error con IA: ' + error.message + '\n\nAsegúrate de que la API Key esté configurada correctamente en Netlify.');
                     setTimeout(() => {
                         this.aiStatus = 'ready';
                         this.render();
@@ -256,7 +266,7 @@
                                         <div class="bg-blue-500 p-3 rounded-xl text-white text-2xl">🛒</div>
                                         <div>
                                             <h1 class="text-2xl sm:text-3xl font-bold text-gray-800">Mi Lista de Compras</h1>
-                                            <p class="text-xs sm:text-sm text-gray-500">⚡ Con IA y Voz</p>
+                                            <p class="text-xs sm:text-sm text-gray-500">⚡ Con IA y Voz (Netlify)</p>
                                         </div>
                                     </div>
                                     <div class="px-3 py-2 rounded-full text-sm font-medium ${statusColors[this.aiStatus]}">
@@ -265,7 +275,7 @@
                                 </div>
 
                                 <div class="mb-4 p-3 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
-                                    <p class="text-sm text-gray-700"><strong class="text-purple-700">💡 Tip:</strong> Usa el micrófono o escribe varios productos</p>
+                                    <p class="text-sm text-gray-700"><strong class="text-purple-700">💡 Tip:</strong> Usa el micrófono o escribe varios productos juntos</p>
                                 </div>
 
                                 <div class="space-y-3">
