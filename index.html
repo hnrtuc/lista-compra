@@ -70,6 +70,7 @@
                     };
 
                     this.recognition.onerror = (event) => {
+                        console.error('Error de voz:', event.error);
                         this.isListening = false;
                         if (event.error === 'no-speech') {
                             alert('No se detectó audio. Intenta de nuevo.');
@@ -108,7 +109,8 @@
                 this.render();
 
                 try {
-                    // Llamar a la función de Netlify en lugar de directamente a la API
+                    console.log('Llamando a la función de Netlify...');
+                    
                     const response = await fetch('/.netlify/functions/claude-api', {
                         method: 'POST',
                         headers: {
@@ -119,15 +121,22 @@
                         })
                     });
 
+                    console.log('Respuesta recibida:', response.status);
+
                     if (!response.ok) {
-                        throw new Error(`Error: ${response.status}`);
+                        const errorText = await response.text();
+                        console.error('Error de respuesta:', errorText);
+                        throw new Error(`Error ${response.status}: ${errorText}`);
                     }
 
                     const data = await response.json();
+                    console.log('Datos recibidos:', data);
                     
                     if (data.content && data.content[0]?.text) {
                         let text = data.content[0].text.trim();
                         text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+                        
+                        console.log('Texto a parsear:', text);
                         
                         const parsed = JSON.parse(text);
                         
@@ -152,9 +161,9 @@
                         throw new Error('Respuesta inválida de la API');
                     }
                 } catch (error) {
-                    console.error('Error con IA:', error);
+                    console.error('Error completo:', error);
                     this.aiStatus = 'error';
-                    alert('Error con IA: ' + error.message + '\n\nAsegúrate de que la API Key esté configurada correctamente en Netlify.');
+                    alert('Error con IA: ' + error.message + '\n\nVerifica:\n1. Que existe netlify/functions/claude-api.js\n2. Que la API Key esté configurada en Netlify\n3. Revisa la consola del navegador (F12)');
                     setTimeout(() => {
                         this.aiStatus = 'ready';
                         this.render();
@@ -177,6 +186,11 @@
                 });
                 this.saveData();
                 this.input = '';
+                this.render();
+            }
+
+            handleInput(e) {
+                this.input = e.target.value;
                 this.render();
             }
 
@@ -242,6 +256,7 @@
                 const pending = this.items.filter(i => !i.purchased);
                 const completed = this.items.filter(i => i.purchased);
                 const total = this.items.reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
+                const hasInput = this.input.trim().length > 0;
 
                 const statusColors = {
                     ready: 'bg-green-100 text-green-700',
@@ -266,7 +281,7 @@
                                         <div class="bg-blue-500 p-3 rounded-xl text-white text-2xl">🛒</div>
                                         <div>
                                             <h1 class="text-2xl sm:text-3xl font-bold text-gray-800">Mi Lista de Compras</h1>
-                                            <p class="text-xs sm:text-sm text-gray-500">⚡ Con IA y Voz (Netlify)</p>
+                                            <p class="text-xs sm:text-sm text-gray-500">⚡ Con IA y Voz</p>
                                         </div>
                                     </div>
                                     <div class="px-3 py-2 rounded-full text-sm font-medium ${statusColors[this.aiStatus]}">
@@ -279,7 +294,7 @@
                                 </div>
 
                                 <div class="space-y-3">
-                                    <textarea id="input" class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none" rows="3" placeholder="Ej: 2 kilos papa, 3 panes, leche...">${this.input}</textarea>
+                                    <textarea id="mainInput" class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none" rows="3" placeholder="Ej: 2 kilos papa, 3 panes, leche...">${this.input}</textarea>
                                     
                                     ${this.isListening ? `
                                         <div class="bg-red-50 border-2 border-red-200 rounded-lg p-3 text-center animate-pulse">
@@ -292,15 +307,15 @@
 
                                     <div class="flex gap-2">
                                         ${this.voiceSupported ? `
-                                            <button onclick="app.${this.isListening ? 'stopVoice' : 'startVoice'}()" class="px-4 sm:px-6 py-4 rounded-lg font-medium shadow-lg flex items-center gap-2 ${this.isListening ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600'} text-white">
+                                            <button id="voiceBtn" class="px-4 sm:px-6 py-4 rounded-lg font-medium shadow-lg flex items-center gap-2 ${this.isListening ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600'} text-white">
                                                 <span class="text-xl">🎤</span>
                                                 <span class="hidden sm:inline">${this.isListening ? 'Detener' : 'Hablar'}</span>
                                             </button>
                                         ` : ''}
-                                        <button onclick="app.addWithAI()" ${this.loading || !this.input.trim() ? 'disabled' : ''} class="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 sm:px-6 py-4 rounded-lg hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-400 font-medium shadow-lg flex items-center justify-center gap-2">
+                                        <button id="aiBtn" ${this.loading || !hasInput ? 'disabled' : ''} class="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 sm:px-6 py-4 rounded-lg hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed font-medium shadow-lg flex items-center justify-center gap-2">
                                             ${this.loading ? '<div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div><span class="hidden sm:inline">Analizando...</span>' : '<span>✨</span><span class="hidden sm:inline">Añadir con IA</span><span class="sm:hidden">IA</span>'}
                                         </button>
-                                        <button onclick="app.addManually()" ${!this.input.trim() ? 'disabled' : ''} class="bg-gray-500 text-white px-4 sm:px-6 py-4 rounded-lg hover:bg-gray-600 disabled:bg-gray-300 shadow-lg">
+                                        <button id="manualBtn" ${!hasInput ? 'disabled' : ''} class="bg-gray-500 text-white px-4 sm:px-6 py-4 rounded-lg hover:bg-gray-600 disabled:bg-gray-300 disabled:cursor-not-allowed shadow-lg">
                                             <span class="hidden sm:inline">+ Manual</span><span class="sm:hidden">+</span>
                                         </button>
                                     </div>
@@ -322,7 +337,7 @@
                                 </div>
 
                                 ${this.history.length > 0 ? `
-                                    <button onclick="app.showHistory = !app.showHistory; app.render()" class="w-full mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 flex items-center justify-between">
+                                    <button id="historyBtn" class="w-full mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 flex items-center justify-between">
                                         <span class="font-semibold text-gray-700 text-sm sm:text-base">📜 Historial (${this.history.length})</span>
                                         <span>${this.showHistory ? '▲' : '▼'}</span>
                                     </button>
@@ -418,19 +433,41 @@
                     </div>
                 `;
 
-                const inputEl = document.getElementById('input');
-                if (inputEl) {
-                    inputEl.oninput = (e) => {
-                        this.input = e.target.value;
-                    };
+                // Agregar event listeners
+                const mainInput = document.getElementById('mainInput');
+                if (mainInput) {
+                    mainInput.addEventListener('input', (e) => this.handleInput(e));
                 }
 
-                const editInputEl = document.getElementById('editInput');
-                if (editInputEl) {
-                    editInputEl.oninput = (e) => {
+                const voiceBtn = document.getElementById('voiceBtn');
+                if (voiceBtn) {
+                    voiceBtn.addEventListener('click', () => this.isListening ? this.stopVoice() : this.startVoice());
+                }
+
+                const aiBtn = document.getElementById('aiBtn');
+                if (aiBtn) {
+                    aiBtn.addEventListener('click', () => this.addWithAI());
+                }
+
+                const manualBtn = document.getElementById('manualBtn');
+                if (manualBtn) {
+                    manualBtn.addEventListener('click', () => this.addManually());
+                }
+
+                const historyBtn = document.getElementById('historyBtn');
+                if (historyBtn) {
+                    historyBtn.addEventListener('click', () => {
+                        this.showHistory = !this.showHistory;
+                        this.render();
+                    });
+                }
+
+                const editInput = document.getElementById('editInput');
+                if (editInput) {
+                    editInput.addEventListener('input', (e) => {
                         this.editText = e.target.value;
-                    };
-                    editInputEl.focus();
+                    });
+                    editInput.focus();
                 }
             }
         }
