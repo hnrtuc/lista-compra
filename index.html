@@ -4,34 +4,35 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#3B82F6">
-    <title>Lista de Compras Inteligente</title>
+    <title>Asistente de Compras IA</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
         @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-spin { animation: spin 1s linear infinite; }
         .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         .animate-ping { animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite; }
+        .animate-slideIn { animation: slideIn 0.3s ease-out; }
+        .chat-scroll { scroll-behavior: smooth; }
     </style>
 </head>
 <body class="m-0 p-0 bg-gradient-to-br from-blue-50 to-indigo-100">
     <div id="app"></div>
 
     <script>
-        class ShoppingApp {
+        class ShoppingAssistant {
             constructor() {
                 this.items = [];
                 this.history = [];
-                this.input = '';
+                this.conversation = [];
+                this.pendingItems = null;
                 this.loading = false;
-                this.aiStatus = 'ready';
                 this.isListening = false;
                 this.voiceSupported = false;
-                this.showHistory = false;
-                this.editingId = null;
-                this.editText = '';
                 this.recognition = null;
+                this.showList = true;
                 
                 this.init();
             }
@@ -49,6 +50,9 @@
                     
                     const savedHistory = localStorage.getItem('purchase-history');
                     if (savedHistory) this.history = JSON.parse(savedHistory);
+                    
+                    const savedConversation = localStorage.getItem('conversation');
+                    if (savedConversation) this.conversation = JSON.parse(savedConversation);
                 } catch (e) {
                     console.log('No hay datos guardados');
                 }
@@ -64,23 +68,20 @@
                     this.recognition.interimResults = false;
 
                     this.recognition.onresult = (event) => {
-                        this.input = event.results[0][0].transcript;
+                        const transcript = event.results[0][0].transcript;
+                        document.getElementById('chatInput').value = transcript;
                         this.isListening = false;
-                        this.render();
+                        this.updateUI();
                     };
 
-                    this.recognition.onerror = (event) => {
-                        console.error('Error de voz:', event.error);
+                    this.recognition.onerror = () => {
                         this.isListening = false;
-                        if (event.error === 'no-speech') {
-                            alert('No se detectó audio. Intenta de nuevo.');
-                        }
-                        this.render();
+                        this.updateUI();
                     };
 
                     this.recognition.onend = () => {
                         this.isListening = false;
-                        this.render();
+                        this.updateUI();
                     };
                 }
             }
@@ -89,7 +90,7 @@
                 if (this.recognition && !this.isListening) {
                     this.isListening = true;
                     this.recognition.start();
-                    this.render();
+                    this.updateUI();
                 }
             }
 
@@ -97,101 +98,131 @@
                 if (this.recognition && this.isListening) {
                     this.recognition.stop();
                     this.isListening = false;
-                    this.render();
+                    this.updateUI();
                 }
             }
 
-            async addWithAI() {
-                if (!this.input.trim()) return;
+            async sendMessage() {
+                const input = document.getElementById('chatInput');
+                const message = input.value.trim();
+                
+                if (!message) return;
 
+                // Agregar mensaje del usuario
+                this.conversation.push({
+                    role: 'user',
+                    content: message,
+                    timestamp: new Date().toISOString()
+                });
+                
+                input.value = '';
                 this.loading = true;
-                this.aiStatus = 'processing';
-                this.render();
+                this.updateUI();
+                this.scrollToBottom();
 
                 try {
-                    console.log('Llamando a la función de Netlify...');
-                    
                     const response = await fetch('/.netlify/functions/claude-api', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            input: this.input
+                            input: message,
+                            conversation: this.conversation.slice(-6), // Últimos 6 mensajes para contexto
+                            currentItems: this.items
                         })
                     });
 
-                    console.log('Respuesta recibida:', response.status);
-
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        console.error('Error de respuesta:', errorText);
-                        throw new Error(`Error ${response.status}: ${errorText}`);
-                    }
-
                     const data = await response.json();
-                    console.log('Datos recibidos:', data);
                     
                     if (data.content && data.content[0]?.text) {
                         let text = data.content[0].text.trim();
-                        text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
                         
-                        console.log('Texto a parsear:', text);
-                        
-                        const parsed = JSON.parse(text);
-                        
-                        const newItems = parsed.map((item, i) => ({
-                            id: Date.now() + i,
-                            name: item.name || 'Sin nombre',
-                            quantity: item.quantity || '1 unidad',
-                            category: item.category || 'Otros',
-                            estimatedPrice: parseFloat(item.estimatedPrice || 0),
-                            purchased: false
-                        }));
-
-                        this.items = [...this.items, ...newItems];
-                        this.saveData();
-                        this.input = '';
-                        this.aiStatus = 'success';
-                        setTimeout(() => {
-                            this.aiStatus = 'ready';
-                            this.render();
-                        }, 2000);
-                    } else {
-                        throw new Error('Respuesta inválida de la API');
+                        // Intentar parsear como JSON para productos
+                        try {
+                            text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+                            const parsed = JSON.parse(text);
+                            
+                            if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name) {
+                                // Son productos
+                                this.pendingItems = parsed.map((item, i) => ({
+                                    id: Date.now() + i,
+                                    name: item.name || 'Sin nombre',
+                                    quantity: item.quantity || '1 unidad',
+                                    category: item.category || 'Otros',
+                                    estimatedPrice: parseFloat(item.estimatedPrice || 0),
+                                    purchased: false
+                                }));
+                                
+                                this.conversation.push({
+                                    role: 'assistant',
+                                    content: `He preparado tu lista con ${this.pendingItems.length} productos. ¿Deseas confirmar y agregarlos a tu lista de compras?`,
+                                    timestamp: new Date().toISOString(),
+                                    hasPendingItems: true
+                                });
+                            } else {
+                                throw new Error('No es lista de productos');
+                            }
+                        } catch (e) {
+                            // Es una respuesta conversacional normal
+                            this.conversation.push({
+                                role: 'assistant',
+                                content: text,
+                                timestamp: new Date().toISOString()
+                            });
+                        }
                     }
                 } catch (error) {
-                    console.error('Error completo:', error);
-                    this.aiStatus = 'error';
-                    alert('Error con IA: ' + error.message + '\n\nVerifica:\n1. Que existe netlify/functions/claude-api.js\n2. Que la API Key esté configurada en Netlify\n3. Revisa la consola del navegador (F12)');
-                    setTimeout(() => {
-                        this.aiStatus = 'ready';
-                        this.render();
-                    }, 3000);
+                    console.error('Error:', error);
+                    this.conversation.push({
+                        role: 'assistant',
+                        content: 'Lo siento, tuve un problema al procesar tu mensaje. ¿Podrías intentarlo de nuevo?',
+                        timestamp: new Date().toISOString()
+                    });
                 } finally {
                     this.loading = false;
-                    this.render();
+                    localStorage.setItem('conversation', JSON.stringify(this.conversation));
+                    this.updateUI();
+                    this.scrollToBottom();
                 }
             }
 
-            addManually() {
-                if (!this.input.trim()) return;
-                this.items.push({
-                    id: Date.now(),
-                    name: this.input,
-                    quantity: '1 unidad',
-                    category: 'Otros',
-                    estimatedPrice: 0,
-                    purchased: false
-                });
-                this.saveData();
-                this.input = '';
-                this.render();
+            confirmItems() {
+                if (this.pendingItems) {
+                    this.items = [...this.items, ...this.pendingItems];
+                    this.saveData();
+                    
+                    this.conversation.push({
+                        role: 'assistant',
+                        content: `¡Perfecto! He agregado ${this.pendingItems.length} productos a tu lista. ¿Necesitas algo más?`,
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    this.pendingItems = null;
+                    localStorage.setItem('conversation', JSON.stringify(this.conversation));
+                    this.updateUI();
+                    this.scrollToBottom();
+                }
             }
 
-            handleInput(e) {
-                this.input = e.target.value;
-                this.render();
+            cancelItems() {
+                this.conversation.push({
+                    role: 'assistant',
+                    content: 'De acuerdo, no he agregado nada. ¿Quieres que modifique algo o prefieres empezar de nuevo?',
+                    timestamp: new Date().toISOString()
+                });
+                
+                this.pendingItems = null;
+                localStorage.setItem('conversation', JSON.stringify(this.conversation));
+                this.updateUI();
+                this.scrollToBottom();
+            }
+
+            clearChat() {
+                if (confirm('¿Seguro que quieres borrar toda la conversación?')) {
+                    this.conversation = [];
+                    this.pendingItems = null;
+                    localStorage.removeItem('conversation');
+                    this.updateUI();
+                }
             }
 
             togglePurchased(id) {
@@ -199,29 +230,13 @@
                     item.id === id ? { ...item, purchased: !item.purchased } : item
                 );
                 this.saveData();
-                this.render();
+                this.updateUI();
             }
 
             deleteItem(id) {
                 this.items = this.items.filter(item => item.id !== id);
                 this.saveData();
-                this.render();
-            }
-
-            startEdit(item) {
-                this.editingId = item.id;
-                this.editText = item.name;
-                this.render();
-            }
-
-            saveEdit() {
-                this.items = this.items.map(item =>
-                    item.id === this.editingId ? { ...item, name: this.editText } : item
-                );
-                this.saveData();
-                this.editingId = null;
-                this.editText = '';
-                this.render();
+                this.updateUI();
             }
 
             clearCompleted() {
@@ -239,240 +254,234 @@
                 }
                 this.items = this.items.filter(i => !i.purchased);
                 this.saveData();
-                this.render();
-            }
-
-            deleteHistory(id) {
-                this.history = this.history.filter(r => r.id !== id);
-                localStorage.setItem('purchase-history', JSON.stringify(this.history));
-                this.render();
+                this.updateUI();
             }
 
             saveData() {
                 localStorage.setItem('shopping-items', JSON.stringify(this.items));
             }
 
-            render() {
+            scrollToBottom() {
+                setTimeout(() => {
+                    const chat = document.getElementById('chatMessages');
+                    if (chat) chat.scrollTop = chat.scrollHeight;
+                }, 100);
+            }
+
+            updateUI() {
                 const pending = this.items.filter(i => !i.purchased);
                 const completed = this.items.filter(i => i.purchased);
                 const total = this.items.reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
-                const hasInput = this.input.trim().length > 0;
 
-                const statusColors = {
-                    ready: 'bg-green-100 text-green-700',
-                    processing: 'bg-blue-100 text-blue-700',
-                    success: 'bg-emerald-100 text-emerald-700',
-                    error: 'bg-red-100 text-red-700'
-                };
-
-                const statusText = {
-                    ready: '✓ IA Lista',
-                    processing: '⚡ Procesando...',
-                    success: '✓ ¡Listo!',
-                    error: '✗ Error'
-                };
+                const chatHTML = this.conversation.map((msg, idx) => {
+                    if (msg.role === 'user') {
+                        return `
+                            <div class="flex justify-end mb-4 animate-slideIn">
+                                <div class="bg-blue-500 text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-xs sm:max-w-md">
+                                    <p class="text-sm sm:text-base">${msg.content}</p>
+                                    <p class="text-xs opacity-70 mt-1">${new Date(msg.timestamp).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</p>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        return `
+                            <div class="flex justify-start mb-4 animate-slideIn">
+                                <div class="bg-white rounded-2xl rounded-tl-sm px-4 py-3 max-w-xs sm:max-w-md shadow-md">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <div class="w-6 h-6 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white text-xs">🤖</div>
+                                        <span class="font-semibold text-sm text-gray-700">Asistente</span>
+                                    </div>
+                                    <p class="text-sm sm:text-base text-gray-800 whitespace-pre-line">${msg.content}</p>
+                                    ${msg.hasPendingItems ? `
+                                        <div class="mt-3 flex gap-2">
+                                            <button onclick="app.confirmItems()" class="flex-1 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 text-sm font-medium">
+                                                ✓ Confirmar
+                                            </button>
+                                            <button onclick="app.cancelItems()" class="flex-1 bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 text-sm font-medium">
+                                                ✗ Cancelar
+                                            </button>
+                                        </div>
+                                    ` : ''}
+                                    <p class="text-xs text-gray-400 mt-2">${new Date(msg.timestamp).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</p>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }).join('');
 
                 document.getElementById('app').innerHTML = `
-                    <div class="min-h-screen p-2 sm:p-4">
-                        <div class="max-w-2xl mx-auto">
-                            <div class="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
-                                <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
-                                    <div class="flex items-center gap-3">
-                                        <div class="bg-blue-500 p-3 rounded-xl text-white text-2xl">🛒</div>
-                                        <div>
-                                            <h1 class="text-2xl sm:text-3xl font-bold text-gray-800">Mi Lista de Compras</h1>
-                                            <p class="text-xs sm:text-sm text-gray-500">⚡ Con IA y Voz</p>
+                    <div class="min-h-screen flex flex-col">
+                        <!-- Header -->
+                        <div class="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-4 shadow-lg">
+                            <div class="max-w-4xl mx-auto flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <div class="text-3xl">🛒</div>
+                                    <div>
+                                        <h1 class="text-xl sm:text-2xl font-bold">Asistente de Compras</h1>
+                                        <p class="text-xs sm:text-sm opacity-90">Conversa naturalmente conmigo</p>
+                                    </div>
+                                </div>
+                                <button onclick="app.showList = !app.showList; app.updateUI()" class="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-2 rounded-lg text-sm font-medium">
+                                    ${this.showList ? '💬 Chat' : '📋 Lista'}
+                                </button>
+                            </div>
+                        </div>
+
+                        ${this.showList ? `
+                            <!-- Lista de Compras -->
+                            <div class="flex-1 overflow-y-auto p-4">
+                                <div class="max-w-2xl mx-auto space-y-4">
+                                    <!-- Stats -->
+                                    <div class="grid grid-cols-3 gap-3">
+                                        <div class="bg-white p-3 rounded-xl shadow-md text-center">
+                                            <div class="text-2xl font-bold text-blue-600">${pending.length}</div>
+                                            <div class="text-xs text-gray-600">Pendientes</div>
+                                        </div>
+                                        <div class="bg-white p-3 rounded-xl shadow-md text-center">
+                                            <div class="text-2xl font-bold text-green-600">${completed.length}</div>
+                                            <div class="text-xs text-gray-600">Comprados</div>
+                                        </div>
+                                        <div class="bg-white p-3 rounded-xl shadow-md text-center">
+                                            <div class="text-2xl font-bold text-purple-600">$${total.toFixed(0)}</div>
+                                            <div class="text-xs text-gray-600">Total</div>
                                         </div>
                                     </div>
-                                    <div class="px-3 py-2 rounded-full text-sm font-medium ${statusColors[this.aiStatus]}">
-                                        ${statusText[this.aiStatus]}
-                                    </div>
-                                </div>
 
-                                <div class="mb-4 p-3 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
-                                    <p class="text-sm text-gray-700"><strong class="text-purple-700">💡 Tip:</strong> Usa el micrófono o escribe varios productos juntos</p>
-                                </div>
-
-                                <div class="space-y-3">
-                                    <textarea id="mainInput" class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none" rows="3" placeholder="Ej: 2 kilos papa, 3 panes, leche...">${this.input}</textarea>
-                                    
-                                    ${this.isListening ? `
-                                        <div class="bg-red-50 border-2 border-red-200 rounded-lg p-3 text-center animate-pulse">
-                                            <p class="text-red-700 font-semibold flex items-center justify-center gap-2">
-                                                <span class="inline-block w-3 h-3 bg-red-500 rounded-full animate-ping"></span>
-                                                🎤 Escuchando... Habla ahora
-                                            </p>
+                                    ${pending.length > 0 ? `
+                                        <div class="bg-white rounded-2xl shadow-xl p-4">
+                                            <h2 class="text-lg font-bold text-gray-800 mb-3">📋 Por Comprar</h2>
+                                            <div class="space-y-2">
+                                                ${pending.map(item => `
+                                                    <div class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                                                        <button onclick="app.togglePurchased(${item.id})" class="w-6 h-6 rounded-full border-2 border-gray-300 hover:border-green-500 flex-shrink-0"></button>
+                                                        <div class="flex-1 min-w-0">
+                                                            <div class="font-semibold text-gray-800 truncate">${item.name}</div>
+                                                            <div class="text-xs text-gray-500 flex gap-2">
+                                                                <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">${item.quantity}</span>
+                                                                <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded">${item.category}</span>
+                                                                ${item.estimatedPrice > 0 ? `<span class="text-green-600 font-semibold">$${item.estimatedPrice}</span>` : ''}
+                                                            </div>
+                                                        </div>
+                                                        <button onclick="app.deleteItem(${item.id})" class="p-2 text-red-600 hover:bg-red-50 rounded-lg">🗑️</button>
+                                                    </div>
+                                                `).join('')}
+                                            </div>
                                         </div>
                                     ` : ''}
 
-                                    <div class="flex gap-2">
-                                        ${this.voiceSupported ? `
-                                            <button id="voiceBtn" class="px-4 sm:px-6 py-4 rounded-lg font-medium shadow-lg flex items-center gap-2 ${this.isListening ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600'} text-white">
-                                                <span class="text-xl">🎤</span>
-                                                <span class="hidden sm:inline">${this.isListening ? 'Detener' : 'Hablar'}</span>
-                                            </button>
-                                        ` : ''}
-                                        <button id="aiBtn" ${this.loading || !hasInput ? 'disabled' : ''} class="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 sm:px-6 py-4 rounded-lg hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed font-medium shadow-lg flex items-center justify-center gap-2">
-                                            ${this.loading ? '<div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div><span class="hidden sm:inline">Analizando...</span>' : '<span>✨</span><span class="hidden sm:inline">Añadir con IA</span><span class="sm:hidden">IA</span>'}
-                                        </button>
-                                        <button id="manualBtn" ${!hasInput ? 'disabled' : ''} class="bg-gray-500 text-white px-4 sm:px-6 py-4 rounded-lg hover:bg-gray-600 disabled:bg-gray-300 disabled:cursor-not-allowed shadow-lg">
-                                            <span class="hidden sm:inline">+ Manual</span><span class="sm:hidden">+</span>
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div class="grid grid-cols-3 gap-3 mt-4">
-                                    <div class="bg-blue-50 p-3 rounded-lg text-center border border-blue-200">
-                                        <div class="text-2xl font-bold text-blue-600">${pending.length}</div>
-                                        <div class="text-xs text-gray-600">Pendientes</div>
-                                    </div>
-                                    <div class="bg-green-50 p-3 rounded-lg text-center border border-green-200">
-                                        <div class="text-2xl font-bold text-green-600">${completed.length}</div>
-                                        <div class="text-xs text-gray-600">Comprados</div>
-                                    </div>
-                                    <div class="bg-purple-50 p-3 rounded-lg text-center border border-purple-200">
-                                        <div class="text-2xl font-bold text-purple-600">$${total.toFixed(0)}</div>
-                                        <div class="text-xs text-gray-600">Estimado</div>
-                                    </div>
-                                </div>
-
-                                ${this.history.length > 0 ? `
-                                    <button id="historyBtn" class="w-full mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 flex items-center justify-between">
-                                        <span class="font-semibold text-gray-700 text-sm sm:text-base">📜 Historial (${this.history.length})</span>
-                                        <span>${this.showHistory ? '▲' : '▼'}</span>
-                                    </button>
-                                ` : ''}
-                            </div>
-
-                            ${this.showHistory && this.history.length > 0 ? `
-                                <div class="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
-                                    <h2 class="text-lg sm:text-xl font-bold text-gray-800 mb-4">📊 Compras Anteriores</h2>
-                                    <div class="space-y-3 max-h-96 overflow-y-auto">
-                                        ${this.history.map(r => `
-                                            <div class="border border-gray-200 rounded-lg p-3 sm:p-4 bg-orange-50">
-                                                <div class="flex justify-between items-start mb-2">
-                                                    <div>
-                                                        <div class="text-xs sm:text-sm font-semibold text-gray-700">${new Date(r.date).toLocaleDateString('es-AR', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
-                                                        <div class="text-xs text-gray-500">${r.itemCount} productos - $${r.total.toFixed(0)}</div>
-                                                    </div>
-                                                    <button onclick="app.deleteHistory(${r.id})" class="text-red-500 hover:text-red-700 p-2">🗑️</button>
-                                                </div>
-                                                ${r.items.slice(0,3).map(i => `<div class="text-xs sm:text-sm bg-white rounded px-2 py-1 mb-1 flex justify-between"><span class="truncate">${i.name}</span><span class="text-gray-500 ml-2">${i.quantity}</span></div>`).join('')}
-                                                ${r.items.length > 3 ? `<div class="text-xs text-gray-500 italic px-2">+${r.items.length-3} más...</div>` : ''}
+                                    ${completed.length > 0 ? `
+                                        <div class="bg-white rounded-2xl shadow-xl p-4">
+                                            <div class="flex justify-between items-center mb-3">
+                                                <h2 class="text-lg font-bold text-gray-800">✅ Comprados</h2>
+                                                <button onclick="app.clearCompleted()" class="px-3 py-1 bg-green-500 text-white rounded-lg text-sm">Finalizar</button>
                                             </div>
-                                        `).join('')}
-                                    </div>
-                                </div>
-                            ` : ''}
-
-                            ${pending.length > 0 ? `
-                                <div class="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
-                                    <h2 class="text-lg sm:text-xl font-bold text-gray-800 mb-4">📋 Pendientes (${pending.length})</h2>
-                                    <div class="space-y-2">
-                                        ${pending.map(item => `
-                                            <div class="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 bg-gray-50 rounded-lg hover:bg-gray-100">
-                                                <button onclick="app.togglePurchased(${item.id})" class="w-6 h-6 rounded-full border-2 border-gray-300 hover:border-green-500 flex items-center justify-center flex-shrink-0">
-                                                    ${item.purchased ? '<span class="text-green-500">✓</span>' : ''}
-                                                </button>
-                                                ${this.editingId === item.id ? `
-                                                    <input id="editInput" type="text" value="${this.editText}" class="flex-1 px-3 py-2 border-2 border-blue-300 rounded-lg" />
-                                                    <button onclick="app.saveEdit()" class="p-2 text-green-600 hover:bg-green-50 rounded-lg">💾</button>
-                                                    <button onclick="app.editingId=null; app.render()" class="p-2 text-red-600 hover:bg-red-50 rounded-lg">✖️</button>
-                                                ` : `
-                                                    <div class="flex-1 min-w-0">
-                                                        <div class="font-semibold text-gray-800 text-sm sm:text-base truncate">${item.name}</div>
-                                                        <div class="text-xs sm:text-sm text-gray-500 flex gap-2 flex-wrap mt-1">
-                                                            <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">${item.quantity}</span>
-                                                            <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">${item.category}</span>
-                                                            ${item.estimatedPrice > 0 ? `<span class="text-green-600 font-semibold text-xs">$${item.estimatedPrice}</span>` : ''}
+                                            <div class="space-y-2">
+                                                ${completed.map(item => `
+                                                    <div class="flex items-center gap-3 p-3 bg-green-50 rounded-lg opacity-70">
+                                                        <button onclick="app.togglePurchased(${item.id})" class="w-6 h-6 rounded-full bg-green-500 flex-shrink-0 flex items-center justify-center">
+                                                            <span class="text-white text-sm">✓</span>
+                                                        </button>
+                                                        <div class="flex-1 min-w-0">
+                                                            <div class="font-semibold text-gray-800 line-through truncate">${item.name}</div>
                                                         </div>
                                                     </div>
-                                                    <button onclick="app.startEdit(${JSON.stringify(item).replace(/"/g, '&quot;')})" class="p-2 text-blue-600 hover:bg-blue-50 rounded-lg">✏️</button>
-                                                    <button onclick="app.deleteItem(${item.id})" class="p-2 text-red-600 hover:bg-red-50 rounded-lg">🗑️</button>
-                                                `}
+                                                `).join('')}
                                             </div>
-                                        `).join('')}
-                                    </div>
-                                </div>
-                            ` : ''}
+                                        </div>
+                                    ` : ''}
 
-                            ${completed.length > 0 ? `
-                                <div class="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
-                                    <div class="flex justify-between items-center mb-4 gap-2">
-                                        <h2 class="text-lg sm:text-xl font-bold text-gray-800">✅ Comprados (${completed.length})</h2>
-                                        <button onclick="app.clearCompleted()" class="px-3 sm:px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium shadow-lg text-xs sm:text-sm">✓ Finalizar</button>
-                                    </div>
-                                    <div class="space-y-2">
-                                        ${completed.map(item => `
-                                            <div class="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 bg-green-50 rounded-lg opacity-70">
-                                                <button onclick="app.togglePurchased(${item.id})" class="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
-                                                    <span class="text-white">✓</span>
-                                                </button>
-                                                <div class="flex-1 min-w-0">
-                                                    <div class="font-semibold text-gray-800 line-through text-sm sm:text-base truncate">${item.name}</div>
-                                                    <div class="text-xs sm:text-sm text-gray-500">${item.quantity} • ${item.category}</div>
+                                    ${this.items.length === 0 ? `
+                                        <div class="bg-white rounded-2xl shadow-xl p-12 text-center">
+                                            <div class="text-6xl mb-4">🛒</div>
+                                            <h3 class="text-2xl font-bold text-gray-700 mb-2">Lista vacía</h3>
+                                            <p class="text-gray-500">Habla conmigo para crear tu lista</p>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        ` : `
+                            <!-- Chat -->
+                            <div class="flex-1 overflow-y-auto p-4 chat-scroll" id="chatMessages">
+                                <div class="max-w-4xl mx-auto">
+                                    ${this.conversation.length === 0 ? `
+                                        <div class="text-center py-12">
+                                            <div class="text-6xl mb-4">💬</div>
+                                            <h3 class="text-2xl font-bold text-gray-700 mb-2">¡Hola! Soy tu asistente</h3>
+                                            <p class="text-gray-500 mb-4">Puedes decirme cosas como:</p>
+                                            <div class="space-y-2 text-sm text-gray-600 max-w-md mx-auto">
+                                                <p class="bg-white p-3 rounded-lg shadow">"Necesito 2 kilos de papa, 3 panes y leche"</p>
+                                                <p class="bg-white p-3 rounded-lg shadow">"¿Qué me falta para hacer un asado?"</p>
+                                                <p class="bg-white p-3 rounded-lg shadow">"Agrega frutas y verduras"</p>
+                                            </div>
+                                        </div>
+                                    ` : chatHTML}
+                                    
+                                    ${this.loading ? `
+                                        <div class="flex justify-start mb-4">
+                                            <div class="bg-white rounded-2xl rounded-tl-sm px-4 py-3 shadow-md">
+                                                <div class="flex items-center gap-2">
+                                                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
+                                                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
+                                                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
                                                 </div>
-                                                <button onclick="app.deleteItem(${item.id})" class="p-2 text-red-600 hover:bg-red-50 rounded-lg">🗑️</button>
                                             </div>
-                                        `).join('')}
-                                    </div>
+                                        </div>
+                                    ` : ''}
                                 </div>
-                            ` : ''}
+                            </div>
+                        `}
 
-                            ${this.items.length === 0 ? `
-                                <div class="bg-white rounded-2xl shadow-xl p-8 sm:p-12 text-center">
-                                    <div class="text-6xl mb-4">🛒</div>
-                                    <h3 class="text-xl sm:text-2xl font-bold text-gray-700 mb-2">¡Tu lista está vacía!</h3>
-                                    <p class="text-sm sm:text-base text-gray-500 mb-4">Usa el micrófono 🎤 o escribe productos</p>
-                                    <div class="text-xs sm:text-sm text-gray-400 bg-gray-50 p-3 rounded-lg inline-block">
-                                        <p><strong>Ejemplo:</strong> "2 kilos de papa, 3 panes, 1 litro de leche"</p>
+                        <!-- Input Area -->
+                        <div class="bg-white border-t border-gray-200 p-4 shadow-lg">
+                            <div class="max-w-4xl mx-auto">
+                                ${!this.showList && this.conversation.length > 0 ? `
+                                    <button onclick="app.clearChat()" class="text-xs text-red-600 hover:text-red-700 mb-2">🗑️ Borrar conversación</button>
+                                ` : ''}
+                                ${this.isListening ? `
+                                    <div class="bg-red-50 border-2 border-red-200 rounded-lg p-3 mb-3 text-center animate-pulse">
+                                        <p class="text-red-700 font-semibold flex items-center justify-center gap-2">
+                                            <span class="inline-block w-3 h-3 bg-red-500 rounded-full animate-ping"></span>
+                                            🎤 Escuchando...
+                                        </p>
                                     </div>
+                                ` : ''}
+                                <div class="flex gap-2">
+                                    ${this.voiceSupported ? `
+                                        <button onclick="app.${this.isListening ? 'stopVoice' : 'startVoice'}()" class="px-4 py-3 rounded-xl font-medium shadow-lg flex items-center gap-2 ${this.isListening ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600'} text-white">
+                                            <span class="text-xl">🎤</span>
+                                        </button>
+                                    ` : ''}
+                                    <input 
+                                        type="text" 
+                                        id="chatInput" 
+                                        placeholder="Escribe o habla tu lista..." 
+                                        class="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                    <button onclick="app.sendMessage()" class="px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 font-medium shadow-lg">
+                                        Enviar
+                                    </button>
                                 </div>
-                            ` : ''}
+                            </div>
                         </div>
                     </div>
                 `;
 
-                // Agregar event listeners
-                const mainInput = document.getElementById('mainInput');
-                if (mainInput) {
-                    mainInput.addEventListener('input', (e) => this.handleInput(e));
-                }
-
-                const voiceBtn = document.getElementById('voiceBtn');
-                if (voiceBtn) {
-                    voiceBtn.addEventListener('click', () => this.isListening ? this.stopVoice() : this.startVoice());
-                }
-
-                const aiBtn = document.getElementById('aiBtn');
-                if (aiBtn) {
-                    aiBtn.addEventListener('click', () => this.addWithAI());
-                }
-
-                const manualBtn = document.getElementById('manualBtn');
-                if (manualBtn) {
-                    manualBtn.addEventListener('click', () => this.addManually());
-                }
-
-                const historyBtn = document.getElementById('historyBtn');
-                if (historyBtn) {
-                    historyBtn.addEventListener('click', () => {
-                        this.showHistory = !this.showHistory;
-                        this.render();
+                // Event listener para Enter
+                const chatInput = document.getElementById('chatInput');
+                if (chatInput) {
+                    chatInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') this.sendMessage();
                     });
+                    if (!this.loading) chatInput.focus();
                 }
+            }
 
-                const editInput = document.getElementById('editInput');
-                if (editInput) {
-                    editInput.addEventListener('input', (e) => {
-                        this.editText = e.target.value;
-                    });
-                    editInput.focus();
-                }
+            render() {
+                this.updateUI();
             }
         }
 
-        const app = new ShoppingApp();
+        const app = new ShoppingAssistant();
     </script>
 </body>
 </html>
