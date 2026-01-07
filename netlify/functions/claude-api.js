@@ -18,27 +18,45 @@ exports.handler = async (event) => {
   try {
     const { input, conversation, currentItems } = JSON.parse(event.body);
 
-    const systemPrompt = `Eres un asistente personal de compras amigable y útil. Tu trabajo es ayudar al usuario a crear y gestionar su lista de compras de manera conversacional.
+    // Determinar si el usuario quiere crear una lista o solo conversar
+    const lowerInput = input.toLowerCase();
+    const isListRequest = lowerInput.includes('necesito') || 
+                         lowerInput.includes('quiero') || 
+                         lowerInput.includes('comprar') ||
+                         lowerInput.includes('kilos') ||
+                         lowerInput.includes('panes') ||
+                         /\d+/.test(input) || // Contiene números
+                         lowerInput.includes('agrega') ||
+                         lowerInput.includes('añade');
 
-IMPORTANTE: Cuando el usuario te diga productos para comprar, debes:
-1. Entender lo que necesita (incluso si lo dice de forma natural)
-2. Responder SOLO con un JSON array de productos en este formato EXACTO:
-[{"name":"producto","quantity":"2 kilos","category":"Verduras","estimatedPrice":500}]
+    let systemPrompt = '';
+    
+    if (isListRequest) {
+      // Usuario quiere crear/agregar productos
+      systemPrompt = `Eres un asistente de compras. El usuario te está diciendo productos que necesita comprar.
 
-Categorías permitidas: Frutas, Verduras, Lácteos, Carnes, Panadería, Bebidas, Limpieza, Snacks, Otros
+Tu tarea: Convertir lo que dice en un JSON array con este formato EXACTO (sin texto adicional, sin explicaciones, SOLO el JSON):
 
-Si el usuario hace preguntas, da sugerencias, o conversa, responde de forma natural y amigable SIN JSON.
+[{"name":"Papa","quantity":"2 kilos","category":"Verduras","estimatedPrice":500}]
 
-Lista actual: ${JSON.stringify(currentItems.map(i => i.name))}`;
+Categorías: Frutas, Verduras, Lácteos, Carnes, Panadería, Bebidas, Limpieza, Snacks, Otros
 
-    const messages = [
-      { role: 'user', content: systemPrompt },
-      ...(conversation || []).slice(-6).map(msg => ({
-        role: msg.role,
-        content: msg.content
-      })),
-      { role: 'user', content: input }
-    ];
+IMPORTANTE: Responde ÚNICAMENTE con el array JSON, nada más. Sin texto antes ni después.
+
+Usuario dice: "${input}"`;
+
+    } else {
+      // Usuario está conversando o haciendo preguntas
+      systemPrompt = `Eres un asistente amigable de compras. El usuario está conversando contigo.
+
+Responde de forma natural, amigable y útil. NO uses JSON. Habla como una persona normal.
+
+Si te pregunta por sugerencias o qué necesita, menciona productos específicos que podrías agregar.
+
+Lista actual del usuario: ${currentItems.length > 0 ? currentItems.map(i => i.name).join(', ') : 'vacía'}
+
+Usuario dice: "${input}"`;
+    }
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -49,8 +67,10 @@ Lista actual: ${JSON.stringify(currentItems.map(i => i.name))}`;
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        messages: messages
+        max_tokens: 1500,
+        messages: [
+          { role: 'user', content: systemPrompt }
+        ]
       })
     });
 
@@ -61,6 +81,7 @@ Lista actual: ${JSON.stringify(currentItems.map(i => i.name))}`;
       body: JSON.stringify(data)
     };
   } catch (error) {
+    console.error('Error:', error);
     return {
       statusCode: 500,
       headers,
