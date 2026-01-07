@@ -16,7 +16,29 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { input } = JSON.parse(event.body);
+    const { input, conversation, currentItems } = JSON.parse(event.body);
+
+    const systemPrompt = `Eres un asistente personal de compras amigable y útil. Tu trabajo es ayudar al usuario a crear y gestionar su lista de compras de manera conversacional.
+
+IMPORTANTE: Cuando el usuario te diga productos para comprar, debes:
+1. Entender lo que necesita (incluso si lo dice de forma natural)
+2. Responder SOLO con un JSON array de productos en este formato EXACTO:
+[{"name":"producto","quantity":"2 kilos","category":"Verduras","estimatedPrice":500}]
+
+Categorías permitidas: Frutas, Verduras, Lácteos, Carnes, Panadería, Bebidas, Limpieza, Snacks, Otros
+
+Si el usuario hace preguntas, da sugerencias, o conversa, responde de forma natural y amigable SIN JSON.
+
+Lista actual: ${JSON.stringify(currentItems.map(i => i.name))}`;
+
+    const messages = [
+      { role: 'user', content: systemPrompt },
+      ...(conversation || []).slice(-6).map(msg => ({
+        role: msg.role,
+        content: msg.content
+      })),
+      { role: 'user', content: input }
+    ];
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -27,11 +49,8 @@ exports.handler = async (event) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{
-          role: 'user',
-          content: `Analiza esta lista de compras y separa CADA producto en un item individual. Devuélveme ÚNICAMENTE un JSON válido (sin markdown) con este formato: [{"name":"producto","quantity":"2 kilos","category":"Verduras","estimatedPrice":500}]. Categorías: Frutas, Verduras, Lácteos, Carnes, Panadería, Bebidas, Limpieza, Snacks, Otros. Lista: "${input}"`
-        }]
+        max_tokens: 2000,
+        messages: messages
       })
     });
 
